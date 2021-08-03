@@ -21,14 +21,22 @@ ucd_url_suffix = {
 }
 
 
+def check_http_code(code):
+    if code == 401:
+        print('INFO: Bad token, exiting...')
+        exit(1)
+
+
 def get_digest(file_path):
     h = hashlib.sha256()
     with open(file_path, 'rb') as file:
         while True:
+            # Reading is buffered, so we can read smaller chunks.
             chunk = file.read(h.block_size)
             if not chunk:
                 break
             h.update(chunk)
+    return h.hexdigest()
 
 
 def get_metadata(file):
@@ -36,10 +44,13 @@ def get_metadata(file):
         f_type = 'REGULAR'
     elif os.path.islink(file):
         f_type = 'LINK'
+    elif os.path.isdir(file):
+        f_type = 'DIRECTORY'
     else:
         f_type = None
         print('ERROR: Unknown file type...')
         exit(1)
+
     return json.dumps({
         'path': os.path.basename(file),
         'contentHash': 'SHA-256{{{0}}}'.format(get_digest(file)),
@@ -56,13 +67,14 @@ def create_component_version(base_url, component, version, description=''):
         print('ERROR: Version "{}" for component "{}" already exist!'.format(version, component))
         exit(1)
     req_url = base_url + ucd_url_suffix['create_version'].format(component, version, quote_plus(description))
-    print(' INFO: creating "{}" version for component "{}"...'.format(version, component))
+    print('INFO: creating "{}" version for component "{}"...'.format(version, component))
     req = requests.post(req_url, auth=(user, token), headers=headers, verify=False)
+    check_http_code(req.status_code)
     if req.status_code == 200:
         return req.content.decode()
     else:
         print('ERROR: Error creating version "{}" for component "{}"...'.format(version, component))
-        print("ERROR: Server reply: {}".format(req.content.decode()))
+        print('ERROR: Server reply: {}, code: {}'.format(req.content.decode(), req.status_code))
         exit(1)
 
 
@@ -85,10 +97,11 @@ def add_ver_files_api(base_url, component, version, base_folder):
                                                          'application/octet-stream')
         }
         mp_encoder = MultipartEncoder(fields=file_lister_fields)
-        print('INF0: File metadata:\n{}'.format(
-            json.dumps(json.loads(file_lister_fields['entryMetadata'].decode(), indent=4))))
+        print('INF0: File metadata:\n{}'.format(json.dumps(json.loads(file_lister_fields['entryMetadata'].decode()),
+                                                           indent=4)))
         req_headers = {'Content-Type': mp_encoder.content_type}
         req = requests.post(req_url, auth=(user, token), data=mp_encoder, headers=req_headers, verify=False)
+        check_http_code(req.status_code)
         if req.status_code == 204:
             print('INFO: File "{}" was uploaded successfully...'.format(file))
         else:
@@ -101,10 +114,12 @@ def get_version_id(base_url, component, version):
     req_url = base_url + ucd_url_suffix['get_version_id'].format(component, version)
     req = requests.get(req_url, auth=(user, token), headers={"Accept": "text/plain"}, verify=False)
     http_code = req.status_code
+    check_http_code(req.status_code)
     if http_code == 200:
         return req.content.decode()
     else:
         print('INFO: Cannot find version "{}" for component "{}"'.format(version, component))
+        print('INFO: Server reply: {}, code: {}'.format(req.content.decode(), req.status_code))
     return None
 
 
@@ -121,4 +136,3 @@ token = get_token(args.base_url)
 version_request = create_component_version(args.base_url, args.component, args.version, args.description)
 version_name = json.loads(version_request)['name']
 add_ver_files_api(args.base_url, args.component, version_name, args.base_folder)
-
